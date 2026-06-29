@@ -9,7 +9,7 @@ export function useGenerateTicket() {
     onSuccess: () => {
       // Both the spot grid (AVAILABLE/OCCUPIED) and the parked-cars list
       // depend on this mutation's result, so both need to be refetched.
-    //   queryClient.invalidateQueries({ queryKey: ["parking-spots"] });
+      queryClient.invalidateQueries({ queryKey: ["parking-spots"] });
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
     },
   });

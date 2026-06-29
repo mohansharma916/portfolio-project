@@ -21,9 +21,9 @@ export interface Vehicle {
 }
 
 // How long the car animates at the gate before we consider it "arrived"
-const ENTRY_ANIMATION_MS = 1200; // time car sits at the gate before driving to its spot
+const ENTRY_ANIMATION_MS = 2000; // time car sits at the gate before driving to its spot
 const DRIVE_TO_SPOT_MS = 2000; // time car takes to travel from gate to spot
-const EXIT_ANIMATION_MS = 1300; // time car takes to travel from spot to exit gate
+const EXIT_ANIMATION_MS = 1000; // time car takes to travel from spot to exit gate
 const EXIT_GATE_PAUSE_MS = 1000; // time car sits at exit gate before disappearing
 
 export default function ParkingSimulator() {
@@ -33,15 +33,7 @@ export default function ParkingSimulator() {
   const generateTicket = useGenerateTicket();
   const exitVehicle = useExitVehicle();
   const [rate, setRate] = useState(20);
-
-  // movingCars holds ONLY cars currently mid-animation (entering or exiting).
-  // Once a car has arrived at its spot, it's removed from here and rendered
-  // purely from server data (parkedCars below) — that's the single source
-  // of truth for "settled" parked cars.
   const [movingCars, setMovingCars] = useState<Vehicle[]>([]);
-
-  // Cars we've optimistically hidden from the parked grid because they're
-  // mid-exit-animation (so they don't show in two places at once).
   const [exitingTicketNumbers, setExitingTicketNumbers] = useState<string[]>([]);
 
   const availableParkingSpots = parkingSpotDetails.filter(
@@ -59,10 +51,6 @@ export default function ParkingSimulator() {
   ];
 
   // Parked cars are derived from server data (the real source of truth).
-  // BUG FIX: ticketNumber/spotNumber were commented out, so every parked
-  // car had `ticketNumber: undefined` and `spotNumber: undefined`. That
-  // broke spot matching in ParkingLot AND broke handleExitCar's lookup
-  // (which searched by ticketNumber). Both are restored here.
   const parkedCars: Vehicle[] = parkedTickets
     .filter((ticket) => ticket.status === "ACTIVE")
     .filter((ticket) => !exitingTicketNumbers.includes(ticket.ticketNumber))
@@ -106,25 +94,27 @@ export default function ParkingSimulator() {
       // ever created and the car could never actually become "parked" in
       // the backend's eyes. Restored, and now actually awaited so we know
       // the real ticketNumber before driving the car onward.
-      const ticketPromise = generateTicket.mutateAsync({
-        vehicleNumber: `KA01AB${Math.floor(1000 + Math.random() * 9000)}`,
-        vehicleType: "CAR",
-      });
-
+    
       // Let the car sit at the gate briefly (visual beat), then drive it
       // toward its target spot while the ticket request resolves in
       // parallel.
-      setTimeout(() => {
+      setTimeout(async () => {
         setMovingCars((prev) =>
           prev.map((car) =>
-            car.spotNumber === tempId
+
+            car.id === tempId
               ? { ...car, state: "ENTERING", location: "LOT", spotNumber: targetSpot.spotNumber }
               : car,
           ),
         );
+            await generateTicket.mutateAsync({
+        vehicleNumber: `KA01AB${Math.floor(1000 + Math.random() * 9000)}`,
+        vehicleType: "CAR",
+      });
+
       }, ENTRY_ANIMATION_MS);
 
-      await ticketPromise;
+  
 
       // Once the car has visually arrived at the spot AND the server
       // confirms the ticket, drop it from movingCars. By now parkedTickets
@@ -140,15 +130,11 @@ export default function ParkingSimulator() {
       setMovingCars((prev) => prev.filter((car) => car.spotNumber !== tempId));
     }
   };
-
   const getCarsAtLocation = (location: string) => {
     return movingCars.filter((car) => car.location === location);
   };
 
   const handleExitCar = async (ticketNumber: string) => {
-    // BUG FIX: previously searched `parkedCars.find(... ticketNumber)` where
-    // ticketNumber was always undefined (see fix above) — find() always
-    // failed silently and exit never started.
     const parkedCar = parkedCars.find((car) => car.ticketNumber === ticketNumber);
     if (!parkedCar) return;
 
