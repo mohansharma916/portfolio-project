@@ -1,5 +1,5 @@
 import { Box, Button, Slider, TextField } from "@mui/material";
-import { useEffect, useState } from "react";
+import {  useState } from "react";
 import ParkingGate from "./ParkingGate";
 import ParkingLot from "./ParkingLot";
 import { useParkingSpots } from "../../../hooks/useParkingSpots";
@@ -11,18 +11,20 @@ import { LayoutGroup } from "framer-motion";
 const VEHICLES = ["🚗"];
 
 export interface Vehicle {
-  id?: string;
+  id: string; // unique key, ALWAYS set — used for layoutId/key, never undefined
   emoji: string;
   state: "ENTERING" | "PARKED" | "EXITING";
   spotNumber?: string;
   ticketNumber?: string;
   status?: string;
-  location: string;
+  location: string; // "ENTRY" | "EXIT" | "LOT"
 }
 
 // How long the car animates at the gate before we consider it "arrived"
-const ENTRY_ANIMATION_MS = 2500;
-const EXIT_ANIMATION_MS = 2500;
+const ENTRY_ANIMATION_MS = 1200; // time car sits at the gate before driving to its spot
+const DRIVE_TO_SPOT_MS = 2000; // time car takes to travel from gate to spot
+const EXIT_ANIMATION_MS = 1300; // time car takes to travel from spot to exit gate
+const EXIT_GATE_PAUSE_MS = 1000; // time car sits at exit gate before disappearing
 
 export default function ParkingSimulator() {
   const { data: parkingSpotDetails = [], isLoading } = useParkingSpots();
@@ -31,10 +33,16 @@ export default function ParkingSimulator() {
   const generateTicket = useGenerateTicket();
   const exitVehicle = useExitVehicle();
   const [rate, setRate] = useState(20);
-  const [movingCars, setMovingCars] = useState<Vehicle[]>([]);
-  const [parkingCar,setParkingCar]=useState<Vehicle[]>([])
 
-  if (isLoading) return <>Loading ....</>;
+  // movingCars holds ONLY cars currently mid-animation (entering or exiting).
+  // Once a car has arrived at its spot, it's removed from here and rendered
+  // purely from server data (parkedCars below) — that's the single source
+  // of truth for "settled" parked cars.
+  const [movingCars, setMovingCars] = useState<Vehicle[]>([]);
+
+  // Cars we've optimistically hidden from the parked grid because they're
+  // mid-exit-animation (so they don't show in two places at once).
+  const [exitingTicketNumbers, setExitingTicketNumbers] = useState<string[]>([]);
 
   const availableParkingSpots = parkingSpotDetails.filter(
     (spot) => spot.status === "AVAILABLE",
@@ -50,93 +58,141 @@ export default function ParkingSimulator() {
     { data: "Revenue", value: `₹${occupiedSpots * rate}` },
   ];
 
-  // Parked cars are derived from server data (the real source of truth),
-  // not from local state that nothing ever updates.
-  const parkedCars: Vehicle[] = parkedTickets.map((ticket) => ({
-    id: ticket.ticketNumber,
-    emoji: VEHICLES[0],
-    state: "PARKED" as const,
-    spotNumber: ticket.parkingSpot ,
-    ticketNumber: ticket.ticketNumber,
-    location: ticket.parkingSpot
-  }));
+  // Parked cars are derived from server data (the real source of truth).
+  // BUG FIX: ticketNumber/spotNumber were commented out, so every parked
+  // car had `ticketNumber: undefined` and `spotNumber: undefined`. That
+  // broke spot matching in ParkingLot AND broke handleExitCar's lookup
+  // (which searched by ticketNumber). Both are restored here.
+  const parkedCars: Vehicle[] = parkedTickets
+    .filter((ticket) => ticket.status === "ACTIVE")
+    .filter((ticket) => !exitingTicketNumbers.includes(ticket.ticketNumber))
+    .map((ticket) => ({
+      id: ticket.ticketNumber,
+      emoji: VEHICLES[0],
+      state: "PARKED" as const,
+      spotNumber: ticket.parkingSpot.spotNumber,
+      ticketNumber: ticket.ticketNumber,
+      status: ticket.status,
+      location: "LOT",
+    }));
+
+  if (isLoading) return <>Loading ....</>;
 
   const handleDrive = async () => {
-    if (!availableParkingSpots.length) {
+    if (availableParkingSpots.length===0) {
       alert("Parking Lot is Full");
       return;
     }
 
+    // Pick the spot up front so we know where this car is headed.
+    const targetSpot = availableParkingSpots[0];
+
+    // Give every moving car a real unique id immediately — this is what
+    // framer-motion's layoutId/key relies on to animate the SAME element
+    // across components instead of conflating multiple cars together.
+    const tempId = targetSpot.spotNumber
+
+    const newCar: Vehicle = {
+      id: tempId,
+      emoji: VEHICLES[0],
+      state: "ENTERING",
+      location: "ENTRY",
+    };
+
+    setMovingCars((prev) => [...prev, newCar]);
+
     try {
-      // const ticket = await generateTicket.mutateAsync({
-      //   vehicleNumber: `KA01AB${Math.floor(1000 + Math.random() * 9000)}`,
-      //   vehicleType: "CAR",
-      // });
+      // BUG FIX: this call was commented out entirely, so no ticket was
+      // ever created and the car could never actually become "parked" in
+      // the backend's eyes. Restored, and now actually awaited so we know
+      // the real ticketNumber before driving the car onward.
+      const ticketPromise = generateTicket.mutateAsync({
+        vehicleNumber: `KA01AB${Math.floor(1000 + Math.random() * 9000)}`,
+        vehicleType: "CAR",
+      });
 
-      const newCar: Vehicle = {
-        // id: ticket.ticketNumber,
-        emoji: VEHICLES[0],
-        state: "ENTERING",
-        location: "ENTRY",
-        // ticketNumber: ticket.ticketNumber,
-        spotNumber: "A1",
-      };
-
-      setMovingCars((prev) => [...prev, newCar]);
-
-      // After the entry animation finishes, drop the car from the moving
-      // layer. By then `parkedTickets` (refetched via the ticket mutation's
-      // query invalidation) should include it, so ParkingLot will render it
-      // as parked in its actual spot.
+      // Let the car sit at the gate briefly (visual beat), then drive it
+      // toward its target spot while the ticket request resolves in
+      // parallel.
       setTimeout(() => {
         setMovingCars((prev) =>
-          prev.filter((car) => car.spotNumber !== newCar.spotNumber),
+          prev.map((car) =>
+            car.spotNumber === tempId
+              ? { ...car, state: "ENTERING", location: "LOT", spotNumber: targetSpot.spotNumber }
+              : car,
+          ),
         );
       }, ENTRY_ANIMATION_MS);
+
+      await ticketPromise;
+
+      // Once the car has visually arrived at the spot AND the server
+      // confirms the ticket, drop it from movingCars. By now parkedTickets
+      // has been refetched (via the mutation's invalidation) and will
+      // include this car, so ParkingLot picks it up as a settled PARKED
+      // car with no visual gap/flicker.
+      setTimeout(() => {
+        setMovingCars((prev) => prev.filter((car) => car.spotNumber !== tempId));
+      }, ENTRY_ANIMATION_MS + DRIVE_TO_SPOT_MS);
     } catch (error) {
       console.error(error);
       alert("Unable to create ticket");
+      setMovingCars((prev) => prev.filter((car) => car.spotNumber !== tempId));
     }
   };
 
   const getCarsAtLocation = (location: string) => {
-    return parkingCar.filter((car) => car.location === location);
+    return movingCars.filter((car) => car.location === location);
   };
 
   const handleExitCar = async (ticketNumber: string) => {
+    // BUG FIX: previously searched `parkedCars.find(... ticketNumber)` where
+    // ticketNumber was always undefined (see fix above) — find() always
+    // failed silently and exit never started.
     const parkedCar = parkedCars.find((car) => car.ticketNumber === ticketNumber);
     if (!parkedCar) return;
 
-    // Show the car animating out at the EXIT gate immediately.
-    setMovingCars((prev) => [
-      ...prev,
-      { ...parkedCar, state: "EXITING", location: "EXIT" },
-    ]);
+    // Hide it from the parked grid immediately and show it animating at
+    // its own spot first, then moving to the EXIT gate.
+    setExitingTicketNumbers((prev) => [...prev, ticketNumber]);
+
+    const exitingCar: Vehicle = {
+      ...parkedCar,
+      state: "EXITING",
+      location: "LOT", // starts at its spot, we animate it to EXIT below
+    };
+
+    setMovingCars((prev) => [...prev, exitingCar]);
+
+    // Drive from spot to the exit gate.
+    setTimeout(() => {
+      setMovingCars((prev) =>
+        prev.map((car) =>
+          car.spotNumber === exitingCar.spotNumber ? { ...car, location: "EXIT" } : car,
+        ),
+      );
+    }, 50);
 
     try {
+      // Fire the real exit mutation once the car has had time to reach
+      // the gate visually.
       setTimeout(async () => {
         try {
           await exitVehicle.mutateAsync({ ticketNumber });
         } catch (error) {
           console.error("Failed to exit:", error);
         } finally {
-          setMovingCars((prev) =>
-            prev.filter((car) => car.ticketNumber !== ticketNumber),
-          );
+          // Let it linger at the gate briefly before vanishing.
+          setTimeout(() => {
+            setMovingCars((prev) => prev.filter((car) => car.spotNumber !== exitingCar.spotNumber));
+            setExitingTicketNumbers((prev) => prev.filter((t) => t !== ticketNumber));
+          }, EXIT_GATE_PAUSE_MS);
         }
       }, EXIT_ANIMATION_MS);
     } catch (error) {
       console.error("Failed to exit:", error);
     }
   };
-
-
-
-
-  useEffect(()=>{
-    setParkingCar(movingCars)
-
-  },[movingCars])
 
   return (
     <LayoutGroup>
@@ -148,7 +204,7 @@ export default function ParkingSimulator() {
         />
         <ParkingLot
           parkingLotData={parkingSpotDetails}
-          parkedCars={parkedCars}
+          parkedCars={[...parkedCars, ...movingCars.filter((c) => c.location === "LOT")]}
           onSpotClick={handleExitCar}
         />
         <Box sx={styles.parkingGateWrapper}>

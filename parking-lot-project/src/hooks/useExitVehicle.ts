@@ -8,7 +8,7 @@ export function useExitVehicle() {
     mutationFn: exitVehicleFromParking,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["parking-spots"] });
-      queryClient.invalidateQueries({ queryKey: ["parked-tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
     },
   });
 }

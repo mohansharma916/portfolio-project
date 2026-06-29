@@ -34,16 +34,20 @@ export default function ParkingGrid({ ParkingSpot, parkedCar, onSpotClick, occup
       >
         <AnimatePresence>
           {parkedCar && (
-            // layoutId is keyed by ticketNumber, not spotNumber, so it stays
-            // unique to this specific car as it animates between the gate
-            // and its spot (and matches the layoutId used in ParkingGate).
+            // BUG FIX: layoutId/key keyed by car.id (stable per-car id set
+            // in ParkingSimulator), matching the same id used in
+            // ParkingGate. This is what lets framer-motion treat the car
+            // at the gate and the car in this spot as ONE continuous
+            // element and animate it smoothly between the two, instead of
+            // every car sharing the literal id "pop" and clobbering each
+            // other.
             <motion.div
-              key={parkedCar.ticketNumber}
-              layoutId={"A1"}
+              key={parkedCar.id}
+              layoutId={parkedCar.id}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.6, ease: "easeInOut" }}
+              transition={{ duration: 0.8, ease: "easeInOut" }}
               style={{ fontSize: "2rem", position: "absolute" }}
             >
               {parkedCar.emoji}

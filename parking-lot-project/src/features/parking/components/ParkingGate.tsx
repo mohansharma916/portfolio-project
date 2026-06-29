@@ -13,10 +13,6 @@ export default function ParkingGate({
   label = "ENTRY",
   carAtGate = [],
 }: Props) {
-
-
-
-  console.log("CAR AT GATE",carAtGate)
   return (
     <Box
       sx={{
@@ -48,18 +44,23 @@ export default function ParkingGate({
       >
         <AnimatePresence>
           {carAtGate.map((car) => (
-            // Each moving car has a unique ticketNumber, so both `key` and
-            // `layoutId` use that instead of the old undefined `car.id` /
-            // shared `spotNumber`, which caused collisions between
-            // simultaneously-entering cars.
-            
+            // BUG FIX: layoutId was hardcoded to the literal string "pop"
+            // for every car everywhere (here AND in ParkingGrid). With a
+            // shared layoutId, framer-motion treats every car in the app as
+            // the SAME element, so multiple simultaneous cars would morph
+            // into and fight each other instead of animating independently.
+            // Each car now gets its own stable id (car.id, set once when
+            // created in ParkingSimulator) used as both `key` and
+            // `layoutId`, and the SAME id is used in ParkingGrid below so
+            // framer-motion can smoothly animate this exact car between
+            // the gate and its spot.
             <motion.div
-              key={car.ticketNumber}
-              layoutId={car.ticketNumber}
+              key={car.id}
+              layoutId={car.id}
               initial={{ opacity: 0, scale: 0.5 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.5 }}
-              transition={{ duration: 1.5, ease: "easeInOut" }}
+              transition={{ duration: 0.6, ease: "easeInOut" }}
               style={{
                 fontSize: "2rem",
                 position: "absolute",

@@ -9,9 +9,23 @@ export interface Ticket {
   ticketNumber: string;
   vehicleNumber: string;
   vehicleType: string;
-  parkingSpot: string;
+  parkingSpot: ParkingSpot;
+  status:string;
   entryTime: Date;
 }
 
 
 export interface AllTicketDataType extends Ticket{}
+
+
+export interface Vehicle {
+  ticketNumber: string;
+  emoji: string;
+
+  state: "ENTERING" | "EXITING";
+
+  from: string;
+  to: string;
+
+  spotNumber: string;
+}

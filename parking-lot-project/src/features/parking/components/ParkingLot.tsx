@@ -15,6 +15,9 @@ export default function ParkingLot({ parkedCars, onSpotClick, parkingLotData }: 
       <Typography>Click a parked spot to exit</Typography>
       <Box sx={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 2, paddingX: 5 }}>
         {parkingLotData.map((parkingSpot) => {
+          // This now works correctly because parkedCars entries reliably
+          // carry a real spotNumber (see ParkingSimulator fix) instead of
+          // undefined.
           const parkedCar = parkedCars.find(
             (car) => car.spotNumber === parkingSpot.spotNumber,
           );
